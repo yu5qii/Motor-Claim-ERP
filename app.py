@@ -23,15 +23,17 @@ h1,h2,h3 {color:#0b2a4a;}
 st.title("Motor Claim AI Report System")
 st.caption("Version 0.1 — Upload Document + RC → Extract → Edit → Select → Assess → Excel")
 
-# --- Session State Initialization ---
-if "items" not in st.session_state:
-    st.session_state.items = pd.DataFrame(columns=COLUMNS)
+# --- Session State Initialization (FIXED NAMING) ---
+if "df_items" not in st.session_state:
+    st.session_state["df_items"] = pd.DataFrame(columns=COLUMNS)
 if "header" not in st.session_state:
-    st.session_state.header = {}
+    st.session_state["header"] = {}
 if "rc" not in st.session_state:
-    st.session_state.rc = {}
+    st.session_state["rc"] = {}
 if "doc_type" not in st.session_state:
-    st.session_state.doc_type = "Other"
+    st.session_state["doc_type"] = "Other"
+if "raw_text" not in st.session_state:
+    st.session_state["raw_text"] = "No extraction performed yet."
 
 # --- Main Layout ---
 left, mid, right = st.columns([1.1, 1.2, 1.4])
@@ -44,8 +46,6 @@ with left:
     
     if docs:
         st.success(f"{len(docs)} document(s) uploaded")
-        
-        # --- THIS IS THE SECTION YOU ARE REPLACING ---
         if st.button("Extract Data", type="primary"):
             all_text = []
             pages = 0
@@ -63,22 +63,24 @@ with left:
             combined = "\n".join(all_text)
             
             # Use Backend Services
-            st.session_state.header = extract_header(combined)
-            st.session_state.doc_type = detect_document_type(combined, docs[0].name)
+            st.session_state["header"] = extract_header(combined)
+            st.session_state["doc_type"] = detect_document_type(combined, docs[0].name)
+            
             rows = extract_items(combined)
             
-            st.session_state.items = pd.DataFrame(rows, columns=COLUMNS)
-            st.session_state.raw_text = combined
-            st.session_state.page_count = pages
+            # Save safely to the new variable name
+            st.session_state["df_items"] = pd.DataFrame(rows, columns=COLUMNS)
+            st.session_state["raw_text"] = combined
+            st.session_state["page_count"] = pages
             
             st.success(f"Extraction complete. {len(rows)} line item(s) found from {pages} document page(s).")
-        # ---------------------------------------------
             
     st.caption("Prototype extraction is intentionally transparent; production AI/OCR will replace/extend these parsers.")
+
 # Column 2: Header Editing
 with mid:
     st.subheader("2. Document Information")
-    h = st.session_state.header
+    h = st.session_state["header"]
     st.write("**Detected document type**")
     
     doc_options = [
@@ -86,9 +88,8 @@ with mid:
         "Supplementary Invoice", "Parts Invoice", "Labour Invoice", "Other"
     ]
     
-    # Safe index finding
-    current_index = doc_options.index(st.session_state.doc_type) if st.session_state.doc_type in doc_options else 7
-    st.session_state.doc_type = st.selectbox("Document Type", doc_options, index=current_index)
+    current_index = doc_options.index(st.session_state["doc_type"]) if st.session_state["doc_type"] in doc_options else 7
+    st.session_state["doc_type"] = st.selectbox("Document Type", doc_options, index=current_index)
     
     header_keys = ["Invoice No.", "Invoice Date", "Workshop / Supplier", "GSTIN", "Registration No.", "Model", "Chassis No.", "VIN", "Mileage", "Owner / Customer"]
     
@@ -97,15 +98,13 @@ with mid:
         
     if st.button("Apply Header Edits"):
         for k in header_keys:
-            st.session_state.header[k] = st.session_state.get("hdr_"+k, "")
+            st.session_state["header"][k] = st.session_state.get("hdr_"+k, "")
 
 # Column 3: Depreciation Calculation
 with right:
     st.subheader("3. Vehicle / Owner & Depreciation")
-    rc_data = st.session_state.rc
-    if rc:
-        st.info("RC uploaded. For Version 0.1, text-based RC extraction is supported; image OCR will be added in the AI/OCR layer.")
-        
+    rc_data = st.session_state["rc"]
+    
     reg_no = st.text_input("Registration No.", value=rc_data.get("Registration No.") or h.get("Registration No.", ""), key="rc_reg")
     owner = st.text_input("Owner Name", value=rc_data.get("Owner / Customer") or h.get("Owner / Customer", ""), key="rc_owner")
     reg_date_str = st.text_input("Registration Date (DD/MM/YYYY)", value=rc_data.get("Registration Date", ""), key="rc_date")
@@ -125,7 +124,7 @@ with right:
         ag = vehicle_age(reg_date, asof)
         if ag:
             years, months = ag
-            st.session_state.age_text = f"{years} Years {months} Months"
+            st.session_state["age_text"] = f"{years} Years {months} Months"
             mrate = metal_dep(years, months)
             st.success(f"Vehicle age: {years} years {months} months")
             st.metric("Metal depreciation", f"{mrate}%")
@@ -138,37 +137,43 @@ with right:
 st.divider()
 
 # --- Editable Data Table ---
+# --- Editable Data Table ---
 st.subheader("4. Extracted Items — Editable")
-df = st.session_state.items
+df = st.session_state.get("df_items")
 
-# Type safety check applied here
 if isinstance(df, pd.DataFrame) and not df.empty:
     df_copy = df.copy()
-    if "Select" in df_copy:
+    
+    # Safely ensure 'Select' column is boolean
+    if "Select" in df_copy.columns:
         df_copy["Select"] = df_copy["Select"].fillna(True).astype(bool)
         
     tabs = st.tabs(["All Items", "Parts", "Labour", "Consumables", "Other"])
+    
     with tabs[0]:
-        edited = st.data_editor(
-            df_copy, use_container_width=True, num_rows="dynamic", hide_index=True,
-            column_config={
-                "Select": st.column_config.CheckboxColumn("Select", default=True),
-                "PMG": st.column_config.SelectboxColumn("PMG", options=["", "M", "P", "G"]),
-                "GST %": st.column_config.NumberColumn("GST %", min_value=0, max_value=100, step=0.5)
-            }
-        )
-        st.session_state.items = edited
-        
-    st.write("Column Selection")
-    visible = st.multiselect("Choose columns to display/export", COLUMNS, default=COLUMNS)
-    display_df = st.session_state.items[[c for c in visible if c in st.session_state.items.columns]]
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
+        try:
+            # Try to render the editable table
+            edited = st.data_editor(
+                df_copy, 
+                use_container_width=True, 
+                num_rows="dynamic", 
+                hide_index=True
+            )
+            st.session_state["df_items"] = edited
+            
+        except Exception as e:
+            # If PyArrow crashes, catch the error and show it
+            st.error(f"Streamlit Data Editor crashed: {e}")
+            st.warning("Rendering raw string table as a fallback:")
+            # Convert everything to strings so it is guaranteed to render
+            st.dataframe(df_copy.astype(str), use_container_width=True)
+            
 else:
     st.info("Upload a document and click Extract Data.")
 
 # --- Financial Summary & Export ---
 st.subheader("5. Assessment Summary")
-df_assess = st.session_state.items
+df_assess = st.session_state["df_items"]
 
 if isinstance(df_assess, pd.DataFrame) and not df_assess.empty:
     selected = df_assess[df_assess["Select"] == True].copy()
@@ -193,18 +198,27 @@ if isinstance(df_assess, pd.DataFrame) and not df_assess.empty:
 
     rc_export_data = {"Registration No.": reg_no, "Owner / Customer": owner, "Registration Date": reg_date_str}
     
-    # Export File Generation
-    xlsx = make_excel(st.session_state.items, st.session_state.header, rc_export_data, mrate)
-    st.download_button(
-        "Generate Assessment Excel", 
-        data=xlsx, 
-        file_name="Motor_Claim_AI_Assessment.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
-        type="primary"
+    # Export File Generation 
+    xlsx = make_excel(
+        st.session_state["df_items"], 
+        st.session_state["header"], 
+        rc_export_data, 
+        mrate,
+        st.session_state.get("doc_type", ""),
+        st.session_state.get("age_text", "")
     )
+    
+    st.download_button(
+            label="Generate Assessment Excel", 
+            data=xlsx, 
+            file_name="Motor_Claim_AI_Assessment.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+            type="primary",
+            key="download_excel_btn"  # <--- This unique key prevents the crash
+        )
 else:
     st.caption("Assessment will appear after extraction.")
 
 # --- Debugging ---
 with st.expander("Raw extracted text (debug / verification)"):
-    st.text(st.session_state.get("raw_text", "No extraction performed yet."))
+    st.text(st.session_state["raw_text"])

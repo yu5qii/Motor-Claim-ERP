@@ -77,35 +77,39 @@ def extract_header(text):
 
 def parse_mg_lines(text):
     rows = []
-    # MG sample: line starts with serial, code, description, INS, HSN, qty, rate, ...
+    
+    # Matches: S.No | Code | Description | INS | HSN | Qty | Rate
+    # It stops caring after the Rate, ignoring the unpredictable trailing hyphens/zeros.
     pat = re.compile(
-        r"(?m)^\s*(\d+)\s+([A-Z0-9][A-Z0-9\-_/]+)\s+(.+?)\s+INS\s+(\d{4,8})\s+"
-        r"([0-9]+(?:\.[0-9]+)?)\s+([0-9,]+\.[0-9]+)\s+([0-9,]+\.[0-9]+)\s+"
-        r"([0-9,]+\.[0-9]+)"
+        r"(?m)^\s*(\d+)\s+([A-Z0-9\-]+)\s+(.+?)\s+INS\s+(\d+)\s+([0-9]+\.[0-9]+)\s+([0-9,]+\.[0-9]+)"
     )
+    
     for m in pat.finditer(text):
-        sn, code, desc, hsn, qty, rate, disc, taxable = m.groups()
+        sn, code, desc, hsn, qty, rate = m.groups()
+        
+        # Automatically classify based on the standard automotive labour HSN code
+        item_type = "Labour" if hsn == "998729" else "Part"
+        
+        # Calculate raw math (since trailing invoice data is noisy)
+        clean_rate = clean_num(rate)
+        clean_qty = float(qty)
+        taxable = clean_rate * clean_qty
+        
         rows.append({
-            "Select": True, "Item Type": "Part", "Description": desc.strip(),
-            "Part No. / Labour Code": code, "HSN / SAC": hsn, "PMG": "",
-            "Qty": float(qty), "Unit": "NOS", "Rate (₹)": clean_num(rate),
-            "Taxable Amount (₹)": clean_num(taxable), "GST %": 18.0,
-            "GST Amount (₹)": round(clean_num(taxable)*0.18,2)
+            "Select": True, 
+            "Item Type": item_type, 
+            "Description": desc.strip(),
+            "Part No. / Labour Code": code, 
+            "HSN / SAC": hsn, 
+            "PMG": "",
+            "Qty": clean_qty, 
+            "Unit": "NOS" if item_type == "Part" else "JOB", 
+            "Rate (₹)": clean_rate,
+            "Taxable Amount (₹)": taxable, 
+            "GST %": 18.0,
+            "GST Amount (₹)": round(taxable * 0.18, 2)
         })
-    # labour lines
-    lpat = re.compile(
-        r"(?m)^\s*(\d+)\s+([A-Z0-9][A-Z0-9\-_/]+)\s+(.+?)\s+INS\s+998729\s+"
-        r"([0-9]+(?:\.[0-9]+)?)\s+([0-9,]+\.[0-9]+)"
-    )
-    for m in lpat.finditer(text):
-        sn, code, desc, qty, rate = m.groups()
-        rows.append({
-            "Select": True, "Item Type": "Labour", "Description": desc.strip(),
-            "Part No. / Labour Code": code, "HSN / SAC": "998729", "PMG": "",
-            "Qty": float(qty), "Unit": "JOB", "Rate (₹)": clean_num(rate),
-            "Taxable Amount (₹)": clean_num(rate)*float(qty), "GST %": 18.0,
-            "GST Amount (₹)": round(clean_num(rate)*float(qty)*0.18,2)
-        })
+        
     return rows
 
 def parse_tata_lines(text):
