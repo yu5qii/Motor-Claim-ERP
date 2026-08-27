@@ -5,7 +5,7 @@ from datetime import date, datetime
 # --- Local Module Imports ---
 from config.settings import COLUMNS
 from backend.extractor import pdf_text, process_image
-from backend.parsers import detect_document_type, extract_header, extract_items
+from backend.parsers import detect_document_type, extract_header, extract_items, extract_rc_details
 from backend.calculator import vehicle_age, metal_dep, depreciation_for_row
 from backend.exporter import make_excel
 
@@ -34,6 +34,11 @@ if "doc_type" not in st.session_state:
     st.session_state["doc_type"] = "Other"
 if "raw_text" not in st.session_state:
     st.session_state["raw_text"] = "No extraction performed yet."
+if "raw_text" not in st.session_state:
+    st.session_state["raw_text"] = "No extraction performed yet."
+# Add this new line:
+if "rc_raw_text" not in st.session_state:
+    st.session_state["rc_raw_text"] = "No RC extraction performed yet."
 
 # --- Main Layout ---
 left, mid, right = st.columns([1.1, 1.2, 1.4])
@@ -47,6 +52,7 @@ with left:
     if docs:
         st.success(f"{len(docs)} document(s) uploaded")
         if st.button("Extract Data", type="primary"):
+            # --- 1. EXTRACT INVOICE DATA ---
             all_text = []
             pages = 0
             for f in docs:
@@ -62,18 +68,35 @@ with left:
             
             combined = "\n".join(all_text)
             
-            # Use Backend Services
             st.session_state["header"] = extract_header(combined)
             st.session_state["doc_type"] = detect_document_type(combined, docs[0].name)
-            
             rows = extract_items(combined)
             
-            # Save safely to the new variable name
             st.session_state["df_items"] = pd.DataFrame(rows, columns=COLUMNS)
             st.session_state["raw_text"] = combined
             st.session_state["page_count"] = pages
             
-            st.success(f"Extraction complete. {len(rows)} line item(s) found from {pages} document page(s).")
+            # --- 2. EXTRACT RC DATA (NEW) ---
+            if rc:
+                if rc.type == "application/pdf":
+                    rc_text, _ = pdf_text(rc)
+                elif rc.type in ["image/png", "image/jpeg", "image/jpg"]:
+                    rc_text, _ = process_image(rc)
+                else:
+                    rc_text = ""
+                
+                # ADD THIS LINE to save the raw text for debugging:
+                st.session_state["rc_raw_text"] = rc_text
+                
+                # Parse the OCR text using the new backend function
+                st.session_state["rc"] = extract_rc_details(rc_text)
+                st.success("RC successfully scanned and extracted!")
+            else:
+                # Clear previous RC data if no file is uploaded this time
+                st.session_state["rc"] = {}
+                st.session_state["rc_raw_text"] = "No RC extraction performed yet."
+
+            st.success(f"Invoice Extraction complete. {len(rows)} line item(s) found from {pages} document page(s).")
             
     st.caption("Prototype extraction is intentionally transparent; production AI/OCR will replace/extend these parsers.")
 
@@ -220,5 +243,8 @@ else:
     st.caption("Assessment will appear after extraction.")
 
 # --- Debugging ---
-with st.expander("Raw extracted text (debug / verification)"):
-    st.text(st.session_state["raw_text"])
+with st.expander("Raw Invoice extracted text (debug / verification)"):
+    st.text(st.session_state.get("raw_text", "No extraction performed yet."))
+
+with st.expander("Raw RC extracted text (debug / verification)"):
+    st.text(st.session_state.get("rc_raw_text", "No RC extraction performed yet."))

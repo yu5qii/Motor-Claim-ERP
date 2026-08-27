@@ -165,3 +165,34 @@ def extract_items(text):
     if not rows:
         rows = parse_maruti_lines(text)
     return rows
+
+import re
+
+def extract_rc_details(text):
+    """Extracts Registration Certificate details using Regex, accounting for OCR noise."""
+    data = {}
+    
+    # Registration Number: Catches the OCR typo "SUPIEFA7290" or standard formats
+    data["Registration No."] = first_match(text, [
+        r"Registration No\s*([A-Z0-9]+)", 
+        r"([A-Z]{2}[-\s]?[0-9]{1,2}[-\s]?[A-Z]{1,3}[-\s]?[0-9]{4})"
+    ])
+    
+    # Registration Date: Hunts for the "valid from" date or OCR typos like "44-hu-2025"
+    data["Registration Date"] = first_match(text, [
+        r"from\s*([A-Za-z0-9]{1,2}-[A-Za-z]{3}-[0-9]{4})", # Matches "valle from t4-Jul-2025"
+        r"Registration\s+[A-Za-z]+\s*([0-9]{1,2}-[A-Za-z]{2,3}-[0-9]{4})", 
+        r"\b([0-9]{2}[/\-][0-9]{2}[/\-][0-9]{4})\b"
+    ])
+    
+    # Auto-clean the OCR date typo (e.g., changing "t4-Jul-2025" to "14-Jul-2025")
+    if data["Registration Date"] and data["Registration Date"][0].isalpha():
+        data["Registration Date"] = "1" + data["Registration Date"][1:]
+        
+    # Owner Name: Grabs the name immediately following "Owner Name"
+    data["Owner / Customer"] = first_match(text, [
+        r"Owner Name\s*([A-Z\s]+?)(?=\s*Son/|\n|$)",
+        r"(?:NAME|Owner Name|Registered Owner)\s*[:\-]?\s*([A-Z][a-zA-Z\s\.]+)"
+    ])
+    
+    return data
