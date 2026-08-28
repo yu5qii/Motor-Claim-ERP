@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Motor Claim AI Report System</title>
+    <style>
+        /* Modern UI Dashboard CSS */
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #f4f7fa; color: #333; margin: 0; padding: 40px; }
+        .container { max-width: 1400px; margin: 0 auto; display: grid; grid-template-columns: 1fr 2fr; gap: 25px; }
+        .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        h1 { color: #0b2a4a; text-align: center; margin-bottom: 40px; font-size: 2.5rem; }
+        h2 { color: #0b2a4a; margin-top: 0; margin-bottom: 25px; font-size: 1.5rem; border-bottom: 2px solid #f4f7fa; padding-bottom: 10px; }
+        
+        /* Form Elements */
+        label.file-label { display: block; margin-bottom: 8px; font-weight: bold; color: #444; }
+        input[type="file"] { display: block; margin-bottom: 25px; border: 1px dashed #ccc; padding: 15px; border-radius: 6px; width: 100%; box-sizing: border-box; background: #fafafa; }
+        button { background: #0056b3; color: white; border: none; padding: 15px 24px; border-radius: 6px; cursor: pointer; font-weight: bold; width: 100%; font-size: 16px; transition: background 0.2s;}
+        button:hover { background: #004494; }
+        button:disabled { background: #a0c4e8; cursor: not-allowed; }
+        .btn-success { background: #198754; margin-top: 20px;}
+        .btn-success:hover { background: #157347; }
+        
+        /* Read-only Data Grid */
+        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 35px;}
+        .form-group { display: flex; flex-direction: column; }
+        .form-group label { font-size: 12px; color: #666; font-weight: bold; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;}
+        .form-group input { padding: 12px; border: 1px solid #e1e4e8; border-radius: 6px; background: #f8f9fa; font-size: 15px; font-weight: 500; color: #333; outline: none; }
+        
+        /* Table Styling */
+        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        th, td { border-bottom: 1px solid #eee; padding: 15px 12px; text-align: left; }
+        th { background-color: #f8f9fa; color: #666; font-weight: 600; text-transform: uppercase; font-size: 12px; letter-spacing: 0.5px;}
+        .badge { background: #e3f2fd; color: #0056b3; padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: bold; text-transform: uppercase;}
+        input[type="checkbox"] { transform: scale(1.3); cursor: pointer; }
+        
+        /* Loading State */
+        #loader, #exportLoader { display: none; text-align: center; margin-top: 20px; color: #0056b3; font-weight: bold; font-size: 14px;}
+        #resultsCard { opacity: 0.4; pointer-events: none; transition: opacity 0.3s; }
+    </style>
+</head>
+<body>
+    <h1>Motor Claim AI ERP</h1>
+    
+    <div class="container">
+        <!-- LEFT COLUMN: Uploads -->
+        <div class="card">
+            <h2>1. Upload Documents</h2>
+            
+            <label class="file-label">Repair Invoice (PDF or Image)</label>
+            <input type="file" id="invoiceInput" accept=".pdf, .png, .jpg, .jpeg">
+            
+            <label class="file-label">Registration Certificate (RC)</label>
+            <input type="file" id="rcInput" accept=".pdf, .png, .jpg, .jpeg">
+            
+            <button id="extractBtn" onclick="uploadAndExtract()">Analyze with AI</button>
+            <div id="loader">Processing documents using Gemini... Please wait.</div>
+        </div>
+
+        <!-- RIGHT COLUMN: Dashboard Results -->
+        <div class="card" id="resultsCard">
+            <h2>2. Vehicle & Owner Assessment</h2>
+            <div class="form-grid">
+                <div class="form-group"><label>Owner Name</label><input type="text" id="ownerName" readonly placeholder="Awaiting extraction..."></div>
+                <div class="form-group"><label>Registration No.</label><input type="text" id="regNo" readonly placeholder="Awaiting extraction..."></div>
+                <div class="form-group"><label>Registration Date</label><input type="text" id="regDate" readonly placeholder="Awaiting extraction..."></div>
+                <div class="form-group"><label>Chassis No.</label><input type="text" id="chassisNo" readonly placeholder="Awaiting extraction..."></div>
+            </div>
+
+            <h2>3. Extracted Line Items</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Include</th>
+                        <th>Type</th>
+                        <th>Description</th>
+                        <th>Qty</th>
+                        <th>Rate (₹)</th>
+                        <th>Taxable (₹)</th>
+                    </tr>
+                </thead>
+                <tbody id="itemsTableBody">
+                    <tr><td colspan="6" style="text-align: center; color: #999; padding: 40px 0;">Upload documents to see extracted items</td></tr>
+                </tbody>
+            </table>
+
+            <!-- NEW: Export Button -->
+            <button id="exportBtn" class="btn-success" onclick="exportToExcel()">Generate Assessment Excel</button>
+            <div id="exportLoader">Generating Excel file... Please wait.</div>
+        </div>
+    </div>
+
+    <script>
+        // Global variable to hold our data in the browser's memory
+        let currentData = {
+            items: [],
+            rc: {}
+        };
+
+        // Function to update the data when a checkbox is clicked
+        function toggleItemSelection(index, isChecked) {
+            currentData.items[index]["Select"] = isChecked;
+        }
+
+        async function uploadAndExtract() {
+            const invoiceFile = document.getElementById('invoiceInput').files[0];
+            const rcFile = document.getElementById('rcInput').files[0];
+
+            if (!invoiceFile) {
+                alert("Please upload at least an invoice document to proceed.");
+                return;
+            }
+
+            const btn = document.getElementById('extractBtn');
+            const loader = document.getElementById('loader');
+            const resultsCard = document.getElementById('resultsCard');
+            
+            btn.disabled = true;
+            loader.style.display = 'block';
+
+            const formData = new FormData();
+            formData.append('invoice', invoiceFile);
+            if (rcFile) formData.append('rc', rcFile);
+
+            try {
+                const response = await fetch('http://localhost:5000/api/extract', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === "success") {
+                    // Store in global memory
+                    currentData.rc = data.data.rc_details;
+                    currentData.items = data.data.invoice_items;
+
+                    // Map RC to fields
+                    document.getElementById('ownerName').value = currentData.rc["Owner / Customer"] || "Not found";
+                    document.getElementById('regNo').value = currentData.rc["Registration No."] || "Not found";
+                    document.getElementById('regDate').value = currentData.rc["Registration Date"] || "Not found";
+                    document.getElementById('chassisNo').value = currentData.rc["Chassis No."] || "Not found";
+
+                    // Build table with checkboxes
+                    const tbody = document.getElementById('itemsTableBody');
+                    tbody.innerHTML = ""; 
+                    
+                    currentData.items.forEach((item, index) => {
+                        // Ensure 'Select' is true by default
+                        if (item["Select"] === undefined) item["Select"] = true;
+                        const isChecked = item["Select"] ? "checked" : "";
+
+                        tbody.innerHTML += `
+                            <tr>
+                                <td><input type="checkbox" ${isChecked} onchange="toggleItemSelection(${index}, this.checked)"></td>
+                                <td><span class="badge">${item["Item Type"]}</span></td>
+                                <td>${item["Description"]}</td>
+                                <td>${item["Qty"]}</td>
+                                <td>₹${item["Rate (₹)"]}</td>
+                                <td><strong>₹${item["Taxable Amount (₹)"]}</strong></td>
+                            </tr>
+                        `;
+                    });
+
+                    resultsCard.style.opacity = '1';
+                    resultsCard.style.pointerEvents = 'auto';
+                } else {
+                    alert("API Error: " + data.message);
+                }
+            } catch (error) {
+                console.error("Network Failure:", error);
+                alert("Could not connect to the API. Is your Flask server running on port 5000?");
+            } finally {
+                btn.disabled = false;
+                loader.style.display = 'none';
+            }
+        }
+
+        // Function to send the customized data back to the server and download the file
+        async function exportToExcel() {
+            const exportBtn = document.getElementById('exportBtn');
+            const exportLoader = document.getElementById('exportLoader');
+            
+            exportBtn.disabled = true;
+            exportLoader.style.display = 'block';
+
+            // Filter the array to ONLY include items where "Select" is true
+            const selectedItems = currentData.items.filter(item => item["Select"] === true);
+
+            // Build the payload expected by your backend /api/export route
+            const payload = {
+                items: selectedItems, // Send the filtered list
+                rc_data: currentData.rc,
+                header: {
+                    "Owner / Customer": document.getElementById('ownerName').value,
+                    "Registration No.": document.getElementById('regNo').value,
+                    "Chassis No.": document.getElementById('chassisNo').value,
+                },
+                metal_rate: 0, 
+                doc_type: "Repair Invoice",
+                age_text: ""
+            };
+
+            try {
+                // Send the payload to Flask
+                const response = await fetch('http://localhost:5000/api/export', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.ok) {
+                    // Convert the response into a downloadable file
+                    const blob = await response.blob();
+                    const downloadUrl = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = downloadUrl;
+                    a.download = 'Motor_Claim_AI_Assessment.xlsx';
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    window.URL.revokeObjectURL(downloadUrl);
+                } else {
+                    const errorData = await response.json();
+                    alert("Export failed: " + errorData.message);
+                }
+            } catch (error) {
+                console.error("Export Failure:", error);
+                alert("Could not generate the Excel file. Check your server connection.");
+            } finally {
+                exportBtn.disabled = false;
+                exportLoader.style.display = 'none';
+            }
+        }
+    </script>
+</body>
+</html>

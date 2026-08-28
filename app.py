@@ -5,7 +5,13 @@ from datetime import date, datetime
 # --- Local Module Imports ---
 from config.settings import COLUMNS
 from backend.extractor import pdf_text, process_image
-from backend.parsers import detect_document_type, extract_header, extract_items, extract_rc_details
+
+# 1. We keep these two from the old Regex parsers:
+from backend.parsers import detect_document_type, extract_header
+
+# 2. We use these two from the new AI parsers:
+from backend.llm_parser import extract_items_llm, extract_rc_details_llm
+
 from backend.calculator import vehicle_age, metal_dep, depreciation_for_row
 from backend.exporter import make_excel
 
@@ -23,7 +29,7 @@ h1,h2,h3 {color:#0b2a4a;}
 st.title("Motor Claim AI Report System")
 st.caption("Version 0.1 — Upload Document + RC → Extract → Edit → Select → Assess → Excel")
 
-# --- Session State Initialization (FIXED NAMING) ---
+# --- Session State Initialization ---
 if "df_items" not in st.session_state:
     st.session_state["df_items"] = pd.DataFrame(columns=COLUMNS)
 if "header" not in st.session_state:
@@ -34,9 +40,6 @@ if "doc_type" not in st.session_state:
     st.session_state["doc_type"] = "Other"
 if "raw_text" not in st.session_state:
     st.session_state["raw_text"] = "No extraction performed yet."
-if "raw_text" not in st.session_state:
-    st.session_state["raw_text"] = "No extraction performed yet."
-# Add this new line:
 if "rc_raw_text" not in st.session_state:
     st.session_state["rc_raw_text"] = "No RC extraction performed yet."
 
@@ -68,15 +71,23 @@ with left:
             
             combined = "\n".join(all_text)
             
-            st.session_state["header"] = extract_header(combined)
+            # Extract header and FORCE update the text box widgets
+            extracted_hdr = extract_header(combined)
+            st.session_state["header"] = extracted_hdr
+            for k, v in extracted_hdr.items():
+                if v:
+                    st.session_state[f"hdr_{k}"] = v
+                    
             st.session_state["doc_type"] = detect_document_type(combined, docs[0].name)
-            rows = extract_items(combined)
+            # rows = extract_items(combined)
+            with st.spinner("AI is analyzing the invoice..."):
+                rows = extract_items_llm(combined)
             
             st.session_state["df_items"] = pd.DataFrame(rows, columns=COLUMNS)
             st.session_state["raw_text"] = combined
             st.session_state["page_count"] = pages
             
-            # --- 2. EXTRACT RC DATA (NEW) ---
+            # --- 2. EXTRACT RC DATA ---
             if rc:
                 if rc.type == "application/pdf":
                     rc_text, _ = pdf_text(rc)
@@ -85,14 +96,29 @@ with left:
                 else:
                     rc_text = ""
                 
-                # ADD THIS LINE to save the raw text for debugging:
                 st.session_state["rc_raw_text"] = rc_text
                 
-                # Parse the OCR text using the new backend function
-                st.session_state["rc"] = extract_rc_details(rc_text)
+                # Parse the OCR text
+                # extracted_rc = extract_rc_details(rc_text)
+                with st.spinner("AI is analyzing the RC..."):
+                    extracted_rc = extract_rc_details_llm(rc_text)
+                st.session_state["rc"] = extracted_rc
+                
+                # FORCE update the text box widgets in Columns 2 & 3
+                if extracted_rc.get("Registration No."):
+                    st.session_state["rc_reg"] = extracted_rc["Registration No."]
+                    st.session_state["hdr_Registration No."] = extracted_rc["Registration No."]
+                if extracted_rc.get("Owner / Customer"):
+                    st.session_state["rc_owner"] = extracted_rc["Owner / Customer"]
+                    st.session_state["hdr_Owner / Customer"] = extracted_rc["Owner / Customer"]
+                if extracted_rc.get("Registration Date"):
+                    st.session_state["rc_date"] = extracted_rc["Registration Date"]
+                if extracted_rc.get("Chassis No."):
+                    st.session_state["header"]["Chassis No."] = extracted_rc["Chassis No."]
+                    st.session_state["hdr_Chassis No."] = extracted_rc["Chassis No."]
+                    
                 st.success("RC successfully scanned and extracted!")
             else:
-                # Clear previous RC data if no file is uploaded this time
                 st.session_state["rc"] = {}
                 st.session_state["rc_raw_text"] = "No RC extraction performed yet."
 
@@ -160,7 +186,6 @@ with right:
 st.divider()
 
 # --- Editable Data Table ---
-# --- Editable Data Table ---
 st.subheader("4. Extracted Items — Editable")
 df = st.session_state.get("df_items")
 
@@ -175,20 +200,23 @@ if isinstance(df, pd.DataFrame) and not df.empty:
     
     with tabs[0]:
         try:
-            # Try to render the editable table
+            # Try to render the editable table WITH proper column formatting
             edited = st.data_editor(
                 df_copy, 
                 use_container_width=True, 
                 num_rows="dynamic", 
-                hide_index=True
+                hide_index=True,
+                column_config={
+                    "Select": st.column_config.CheckboxColumn("Select", default=True),
+                    "PMG": st.column_config.SelectboxColumn("PMG", options=["", "M", "P", "G"]),
+                    "GST %": st.column_config.NumberColumn("GST %", min_value=0, max_value=100, step=0.5)
+                }
             )
             st.session_state["df_items"] = edited
             
         except Exception as e:
-            # If PyArrow crashes, catch the error and show it
             st.error(f"Streamlit Data Editor crashed: {e}")
             st.warning("Rendering raw string table as a fallback:")
-            # Convert everything to strings so it is guaranteed to render
             st.dataframe(df_copy.astype(str), use_container_width=True)
             
 else:
@@ -237,7 +265,7 @@ if isinstance(df_assess, pd.DataFrame) and not df_assess.empty:
             file_name="Motor_Claim_AI_Assessment.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
             type="primary",
-            key="download_excel_btn"  # <--- This unique key prevents the crash
+            key="download_excel_btn" 
         )
 else:
     st.caption("Assessment will appear after extraction.")

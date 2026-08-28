@@ -167,32 +167,54 @@ def extract_items(text):
     return rows
 
 import re
+from datetime import datetime
 
 def extract_rc_details(text):
-    """Extracts Registration Certificate details using Regex, accounting for OCR noise."""
+    """Extracts RC details and aggressively cleans OCR noise."""
     data = {}
     
-    # Registration Number: Catches the OCR typo "SUPIEFA7290" or standard formats
+    # Helper function to safely pull regex groups
+    def first_match(text, patterns):
+        for pat in patterns:
+            match = re.search(pat, text, re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
+        return ""
+
+    # 1. Registration Number (Catches 'Registration No SUPIEFA7290')
     data["Registration No."] = first_match(text, [
-        r"Registration No\s*([A-Z0-9]+)", 
+        r"Registration No\s*([A-Z0-9]+)",
         r"([A-Z]{2}[-\s]?[0-9]{1,2}[-\s]?[A-Z]{1,3}[-\s]?[0-9]{4})"
     ])
     
-    # Registration Date: Hunts for the "valid from" date or OCR typos like "44-hu-2025"
-    data["Registration Date"] = first_match(text, [
-        r"from\s*([A-Za-z0-9]{1,2}-[A-Za-z]{3}-[0-9]{4})", # Matches "valle from t4-Jul-2025"
-        r"Registration\s+[A-Za-z]+\s*([0-9]{1,2}-[A-Za-z]{2,3}-[0-9]{4})", 
-        r"\b([0-9]{2}[/\-][0-9]{2}[/\-][0-9]{4})\b"
-    ])
-    
-    # Auto-clean the OCR date typo (e.g., changing "t4-Jul-2025" to "14-Jul-2025")
-    if data["Registration Date"] and data["Registration Date"][0].isalpha():
-        data["Registration Date"] = "1" + data["Registration Date"][1:]
-        
-    # Owner Name: Grabs the name immediately following "Owner Name"
+    # 2. Owner Name (Bypasses the '‘Sontwifeldaughtor' OCR glitch)
     data["Owner / Customer"] = first_match(text, [
-        r"Owner Name\s*([A-Z\s]+?)(?=\s*Son/|\n|$)",
-        r"(?:NAME|Owner Name|Registered Owner)\s*[:\-]?\s*([A-Z][a-zA-Z\s\.]+)"
+        r"Owner Name\s*([A-Z\s]+?)\s*['‘]?Sont",
+        r"Owner Name\s*([A-Z\s]+?)(?=\s*Son/|\n|$)"
     ])
     
+    # 3. Chassis Number (Catches 'Chassis Na')
+    data["Chassis No."] = first_match(text, [
+        r"Chassis\s*N[oaA-Z\.]*\s*[:\-]?\s*([A-Z0-9]+)"
+    ])
+    
+    # 4. Registration Date (Finds 't4-Jul-2025' and formats it to DD/MM/YYYY)
+    raw_date = first_match(text, [
+        r"from\s*([A-Za-z0-9]{1,2}-[A-Za-z]{3}-[0-9]{4})"
+    ])
+    
+    if raw_date:
+        # Fix leading OCR typo (e.g., changing 't4' to '14')
+        if raw_date[0].isalpha():
+            raw_date = "1" + raw_date[1:]
+            
+        # Convert '14-Jul-2025' to '14/07/2025' to trigger app.py's depreciation logic
+        try:
+            dt = datetime.strptime(raw_date, "%d-%b-%Y")
+            data["Registration Date"] = dt.strftime("%d/%m/%Y")
+        except Exception:
+            data["Registration Date"] = raw_date  # Fallback if formatting fails
+    else:
+        data["Registration Date"] = ""
+        
     return data
