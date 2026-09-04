@@ -7,7 +7,7 @@ from pypdf import PdfReader
 from pdf2image import convert_from_bytes
 
 # IMPORTANT: If you are on Windows, uncomment and update this line to your Tesseract path:
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+# pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 def preprocess_image_for_ocr(pil_image):
     """Uses OpenCV to clean up the invoice image for better OCR accuracy."""
