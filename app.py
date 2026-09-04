@@ -2,6 +2,16 @@ import pandas as pd
 import streamlit as st
 from datetime import date, datetime
 
+from supabase import create_client, Client
+import streamlit as st
+
+# Pull secrets from .streamlit/secrets.toml
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+
+# Initialize Supabase client
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
 # --- Local Module Imports ---
 from config.settings import COLUMNS
 from backend.extractor import pdf_text, process_image

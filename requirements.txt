@@ -1,4 +1,10 @@
-streamlit>=1.37
-pandas>=2.0
-openpyxl>=3.1
-pypdf>=4.0
+streamlit
+pandas
+openpyxl
+opencv-python-headless
+pytesseract
+Pillow
+pypdf
+pdf2image
+google-generativeai
+supabase
