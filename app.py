@@ -210,7 +210,7 @@ if isinstance(df, pd.DataFrame) and not df.empty:
     
     with tabs[0]:
         try:
-            # Try to render the editable table WITH proper column formatting
+            # The master editable table
             edited = st.data_editor(
                 df_copy, 
                 use_container_width=True, 
@@ -227,7 +227,27 @@ if isinstance(df, pd.DataFrame) and not df.empty:
         except Exception as e:
             st.error(f"Streamlit Data Editor crashed: {e}")
             st.warning("Rendering raw string table as a fallback:")
-            st.dataframe(df_copy.astype(str), use_container_width=True)
+            edited = df_copy # Fallback so the other tabs don't crash
+            st.dataframe(edited.astype(str), use_container_width=True)
+
+    # --- NEW CODE: Populate the other tabs using the 'edited' dataframe ---
+    
+    with tabs[1]:
+        # Filter for Parts
+        st.dataframe(edited[edited["Item Type"].str.contains("Part", na=False, case=False)], use_container_width=True, hide_index=True)
+        
+    with tabs[2]:
+        # Filter for Labour
+        st.dataframe(edited[edited["Item Type"].str.contains("Labour", na=False, case=False)], use_container_width=True, hide_index=True)
+        
+    with tabs[3]:
+        # Filter for Consumables
+        st.dataframe(edited[edited["Item Type"].str.contains("Consumable", na=False, case=False)], use_container_width=True, hide_index=True)
+        
+    with tabs[4]:
+        # Filter for anything that isn't Part, Labour, or Consumable
+        other_df = edited[~edited["Item Type"].str.contains("Part|Labour|Consumable", na=False, case=False)]
+        st.dataframe(other_df, use_container_width=True, hide_index=True)
             
 else:
     st.info("Upload a document and click Extract Data.")
@@ -260,8 +280,9 @@ if isinstance(df_assess, pd.DataFrame) and not df_assess.empty:
     rc_export_data = {"Registration No.": reg_no, "Owner / Customer": owner, "Registration Date": reg_date_str}
     
     # Export File Generation 
+    # Export File Generation 
     xlsx = make_excel(
-        st.session_state["df_items"], 
+        selected,  # <--- CHANGE THIS from st.session_state["df_items"] to selected
         st.session_state["header"], 
         rc_export_data, 
         mrate,
