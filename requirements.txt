@@ -8,3 +8,7 @@ pypdf
 pdf2image
 google-generativeai
 supabase
+
+tesseract-ocr
+poppler-utils
+libgl1
